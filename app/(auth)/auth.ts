@@ -1,35 +1,36 @@
-import { compare } from "bcrypt-ts";
+import { compare, hash } from "bcrypt-ts";
 import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
-import { DUMMY_PASSWORD } from "@/lib/constants";
-import { createGuestUser, getUser } from "@/lib/db/queries";
 import { authConfig } from "./auth.config";
 
-export type UserType = "guest" | "regular";
+export type UserRole = "admin" | "anonymous";
 
 declare module "next-auth" {
   interface Session extends DefaultSession {
     user: {
       id: string;
-      type: UserType;
+      role: UserRole;
     } & DefaultSession["user"];
   }
 
-  // biome-ignore lint/nursery/useConsistentTypeDefinitions: "Required"
   interface User {
     id?: string;
     email?: string | null;
-    type: UserType;
+    role: UserRole;
   }
 }
 
 declare module "next-auth/jwt" {
   interface JWT extends DefaultJWT {
     id: string;
-    type: UserType;
+    role: UserRole;
   }
 }
+
+// 获取管理员凭证
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 
 export const {
   handlers: { GET, POST },
@@ -40,37 +41,29 @@ export const {
   ...authConfig,
   providers: [
     Credentials({
-      credentials: {},
-      async authorize({ email, password }: any) {
-        const users = await getUser(email);
-
-        if (users.length === 0) {
-          await compare(password, DUMMY_PASSWORD);
-          return null;
-        }
-
-        const [user] = users;
-
-        if (!user.password) {
-          await compare(password, DUMMY_PASSWORD);
-          return null;
-        }
-
-        const passwordsMatch = await compare(password, user.password);
-
-        if (!passwordsMatch) {
-          return null;
-        }
-
-        return { ...user, type: "regular" };
+      id: "admin",
+      name: "Admin Login",
+      credentials: {
+        username: { label: "Username", type: "text" },
+        password: { label: "Password", type: "password" },
       },
-    }),
-    Credentials({
-      id: "guest",
-      credentials: {},
-      async authorize() {
-        const [guestUser] = await createGuestUser();
-        return { ...guestUser, type: "guest" };
+      async authorize(credentials) {
+        const { username, password } = credentials as {
+          username: string;
+          password: string;
+        };
+
+        // 验证管理员凭证
+        if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+          return {
+            id: "admin",
+            email: `${ADMIN_USERNAME}@admin.local`,
+            name: "Administrator",
+            role: "admin" as UserRole,
+          };
+        }
+
+        return null;
       },
     }),
   ],
@@ -78,17 +71,15 @@ export const {
     jwt({ token, user }) {
       if (user) {
         token.id = user.id as string;
-        token.type = user.type;
+        token.role = user.role;
       }
-
       return token;
     },
     session({ session, token }) {
       if (session.user) {
         session.user.id = token.id;
-        session.user.type = token.type;
+        session.user.role = token.role;
       }
-
       return session;
     },
   },

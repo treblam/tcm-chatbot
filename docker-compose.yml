@@ -1,0 +1,21 @@
+services:
+  tcm-chatbot:
+    build:
+      context: .
+      args:
+        - AUTH_SECRET=${AUTH_SECRET}
+        - ADMIN_USERNAME=${ADMIN_USERNAME}
+        - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+    container_name: tcm-chatbot
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+    environment:
+      - AUTH_SECRET=${AUTH_SECRET}
+      - AUTH_TRUST_HOST=true
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - CONFIG_PATH=/data/config.json
+      - UPLOAD_DIR=/data/uploads
+    restart: unless-stopped

@@ -16,7 +16,8 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
-import { useLocalStorage, useWindowSize } from "usehooks-ts";
+import useSWR from "swr";
+import { useLocalStorage, useWindowSize } from "@/hooks/use-hooks";
 import {
   ModelSelector,
   ModelSelectorContent,
@@ -29,10 +30,12 @@ import {
   ModelSelectorTrigger,
 } from "@/components/ai-elements/model-selector";
 import {
-  chatModels,
+  chatModels as defaultChatModels,
   DEFAULT_CHAT_MODEL,
-  modelsByProvider,
+  modelsByProvider as defaultModelsByProvider,
+  type ChatModel,
 } from "@/lib/ai/models";
+import { fetcher } from "@/lib/utils";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -196,7 +199,7 @@ function PureMultimodalInput({
       const { error } = await response.json();
       toast.error(error);
     } catch (_error) {
-      toast.error("Failed to upload file, please try again!");
+      toast.error("文件上传失败，请重试！");
     }
   }, []);
 
@@ -266,7 +269,7 @@ function PureMultimodalInput({
         ]);
       } catch (error) {
         console.error("Error uploading pasted images:", error);
-        toast.error("Failed to upload pasted image(s)");
+        toast.error("粘贴的图片上传失败");
       } finally {
         setUploadQueue([]);
       }
@@ -298,6 +301,7 @@ function PureMultimodalInput({
         )}
 
       <input
+        accept="image/jpeg,image/png,image/gif,image/webp"
         className="-top-4 -left-4 pointer-events-none fixed size-0.5 opacity-0"
         multiple
         onChange={handleFileChange}
@@ -311,7 +315,7 @@ function PureMultimodalInput({
         onSubmit={(event) => {
           event.preventDefault();
           if (status !== "ready") {
-            toast.error("Please wait for the model to finish its response!");
+            toast.error("请等待模型完成响应！");
           } else {
             submitForm();
           }
@@ -359,7 +363,7 @@ function PureMultimodalInput({
             maxHeight={200}
             minHeight={44}
             onChange={handleInput}
-            placeholder="Send a message..."
+            placeholder="输入消息..."
             ref={textareaRef}
             rows={1}
             value={input}
@@ -449,6 +453,12 @@ function PureAttachmentsButton({
 
 const AttachmentsButton = memo(PureAttachmentsButton);
 
+type ModelsResponse = {
+  models: ChatModel[];
+  modelsByProvider: Record<string, ChatModel[]>;
+  defaultModel: string;
+};
+
 function PureModelSelectorCompact({
   selectedModelId,
   onModelChange,
@@ -458,58 +468,61 @@ function PureModelSelectorCompact({
 }) {
   const [open, setOpen] = useState(false);
 
+  // 从 API 获取模型列表
+  const { data } = useSWR<ModelsResponse>("/api/models", fetcher);
+
+  // 使用 API 数据或默认值
+  const chatModels = data?.models ?? defaultChatModels;
+  const modelsByProvider = data?.modelsByProvider ?? defaultModelsByProvider;
+
   const selectedModel =
     chatModels.find((m) => m.id === selectedModelId) ??
     chatModels.find((m) => m.id === DEFAULT_CHAT_MODEL) ??
     chatModels[0];
-  const [provider] = selectedModel.id.split("/");
 
-  // Provider display names
-  const providerNames: Record<string, string> = {
-    anthropic: "Anthropic",
-    openai: "OpenAI",
-    google: "Google",
-    xai: "xAI",
-    reasoning: "Reasoning",
-  };
+  // 如果没有找到选中的模型，显示占位符
+  if (!selectedModel) {
+    return (
+      <Button className="h-8 w-[200px] justify-between px-2" variant="ghost" disabled>
+        <ModelSelectorName>加载中...</ModelSelectorName>
+      </Button>
+    );
+  }
 
   return (
     <ModelSelector onOpenChange={setOpen} open={open}>
       <ModelSelectorTrigger asChild>
         <Button className="h-8 w-[200px] justify-between px-2" variant="ghost">
-          {provider && <ModelSelectorLogo provider={provider} />}
+          {selectedModel.provider && <ModelSelectorLogo provider={selectedModel.provider} />}
           <ModelSelectorName>{selectedModel.name}</ModelSelectorName>
         </Button>
       </ModelSelectorTrigger>
       <ModelSelectorContent>
-        <ModelSelectorInput placeholder="Search models..." />
+        <ModelSelectorInput placeholder="搜索模型..." />
         <ModelSelectorList>
           {Object.entries(modelsByProvider).map(
             ([providerKey, providerModels]) => (
               <ModelSelectorGroup
-                heading={providerNames[providerKey] ?? providerKey}
+                heading={providerKey}
                 key={providerKey}
               >
-                {providerModels.map((model) => {
-                  const logoProvider = model.id.split("/")[0];
-                  return (
-                    <ModelSelectorItem
-                      key={model.id}
-                      onSelect={() => {
-                        onModelChange?.(model.id);
-                        setCookie("chat-model", model.id);
-                        setOpen(false);
-                      }}
-                      value={model.id}
-                    >
-                      <ModelSelectorLogo provider={logoProvider} />
-                      <ModelSelectorName>{model.name}</ModelSelectorName>
-                      {model.id === selectedModel.id && (
-                        <CheckIcon className="ml-auto size-4" />
-                      )}
-                    </ModelSelectorItem>
-                  );
-                })}
+                {providerModels.map((model) => (
+                  <ModelSelectorItem
+                    key={model.id}
+                    onSelect={() => {
+                      onModelChange?.(model.id);
+                      setCookie("chat-model", model.id);
+                      setOpen(false);
+                    }}
+                    value={model.id}
+                  >
+                    <ModelSelectorLogo provider={model.provider} />
+                    <ModelSelectorName>{model.name}</ModelSelectorName>
+                    {model.id === selectedModel.id && (
+                      <CheckIcon className="ml-auto size-4" />
+                    )}
+                  </ModelSelectorItem>
+                ))}
               </ModelSelectorGroup>
             )
           )}

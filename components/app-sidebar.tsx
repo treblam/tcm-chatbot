@@ -2,17 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import type { User } from "next-auth";
 import { useState } from "react";
 import { toast } from "sonner";
-import { useSWRConfig } from "swr";
-import { unstable_serialize } from "swr/infinite";
 import { PlusIcon, TrashIcon } from "@/components/icons";
-import {
-  getChatHistoryPaginationKey,
-  SidebarHistory,
-} from "@/components/sidebar-history";
-import { SidebarUserNav } from "@/components/sidebar-user-nav";
+import { SidebarHistory } from "@/components/sidebar-history";
 import { Button } from "@/components/ui/button";
 import {
   Sidebar,
@@ -33,29 +26,25 @@ import {
   AlertDialogTitle,
 } from "./ui/alert-dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { deleteAllChats } from "@/lib/storage/local-storage";
+import { useLocalChats } from "@/hooks/use-local-chats";
 
-export function AppSidebar({ user }: { user: User | undefined }) {
+export function AppSidebar() {
   const router = useRouter();
   const { setOpenMobile } = useSidebar();
-  const { mutate } = useSWRConfig();
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
+  const { clearAllChatHistory, chats } = useLocalChats();
 
   const handleDeleteAll = () => {
-    const deletePromise = fetch("/api/history", {
-      method: "DELETE",
-    });
-
-    toast.promise(deletePromise, {
-      loading: "Deleting all chats...",
-      success: () => {
-        mutate(unstable_serialize(getChatHistoryPaginationKey));
-        setShowDeleteAllDialog(false);
-        router.replace("/");
-        router.refresh();
-        return "All chats deleted successfully";
-      },
-      error: "Failed to delete all chats",
-    });
+    try {
+      clearAllChatHistory();
+      setShowDeleteAllDialog(false);
+      router.replace("/");
+      router.refresh();
+      toast.success("所有对话已删除");
+    } catch {
+      toast.error("删除失败");
+    }
   };
 
   return (
@@ -72,11 +61,11 @@ export function AppSidebar({ user }: { user: User | undefined }) {
                 }}
               >
                 <span className="cursor-pointer rounded-md px-2 font-semibold text-lg hover:bg-muted">
-                  Chatbot
+                  中医AI助手
                 </span>
               </Link>
               <div className="flex flex-row gap-1">
-                {user && (
+                {chats.length > 0 && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button
@@ -89,7 +78,7 @@ export function AppSidebar({ user }: { user: User | undefined }) {
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent align="end" className="hidden md:block">
-                      Delete All Chats
+                      清空所有对话
                     </TooltipContent>
                   </Tooltip>
                 )}
@@ -109,7 +98,7 @@ export function AppSidebar({ user }: { user: User | undefined }) {
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent align="end" className="hidden md:block">
-                    New Chat
+                    新建对话
                   </TooltipContent>
                 </Tooltip>
               </div>
@@ -117,9 +106,26 @@ export function AppSidebar({ user }: { user: User | undefined }) {
           </SidebarMenu>
         </SidebarHeader>
         <SidebarContent>
-          <SidebarHistory user={user} />
+          <SidebarHistory />
         </SidebarContent>
-        <SidebarFooter>{user && <SidebarUserNav user={user} />}</SidebarFooter>
+        <SidebarFooter>
+          <div className="px-2 py-2 text-center text-muted-foreground text-xs">
+            对话记录仅保存在本地浏览器中
+          </div>
+          {chats.length > 0 && (
+            <div className="px-2 pb-2">
+              <Button
+                className="w-full"
+                onClick={() => setShowDeleteAllDialog(true)}
+                size="sm"
+                variant="outline"
+              >
+                <TrashIcon />
+                清除对话记录
+              </Button>
+            </div>
+          )}
+        </SidebarFooter>
       </Sidebar>
 
       <AlertDialog
@@ -128,16 +134,15 @@ export function AppSidebar({ user }: { user: User | undefined }) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete all chats?</AlertDialogTitle>
+            <AlertDialogTitle>清空所有对话？</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. This will permanently delete all
-              your chats and remove them from our servers.
+              此操作不可撤销，所有对话记录将从浏览器中永久删除。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>取消</AlertDialogCancel>
             <AlertDialogAction onClick={handleDeleteAll}>
-              Delete All
+              确认删除
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

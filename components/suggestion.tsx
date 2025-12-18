@@ -2,7 +2,7 @@
 
 import { AnimatePresence, motion } from "framer-motion";
 import { useState } from "react";
-import { useWindowSize } from "usehooks-ts";
+import { useWindowSize } from "@/hooks/use-hooks";
 
 import type { UISuggestion } from "@/lib/editor/suggestions";
 import { cn } from "@/lib/utils";

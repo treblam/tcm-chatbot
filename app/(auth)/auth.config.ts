@@ -2,12 +2,24 @@ import type { NextAuthConfig } from "next-auth";
 
 export const authConfig = {
   pages: {
-    signIn: "/login",
-    newUser: "/",
+    signIn: "/admin-login",
   },
-  providers: [
-    // added later in auth.ts since it requires bcrypt which is only compatible with Node.js
-    // while this file is also used in non-Node.js environments
-  ],
-  callbacks: {},
+  providers: [],
+  callbacks: {
+    authorized({ auth, request: { nextUrl } }) {
+      const isLoggedIn = !!auth?.user;
+      const isAdmin = auth?.user?.role === "admin";
+      const isAdminPage = nextUrl.pathname.startsWith("/admin");
+      const isAdminLoginPage = nextUrl.pathname === "/admin-login";
+
+      // 管理员页面需要管理员登录
+      if (isAdminPage && !isAdminLoginPage) {
+        if (isAdmin) return true;
+        return Response.redirect(new URL("/admin-login", nextUrl));
+      }
+
+      // 其他页面允许所有人访问
+      return true;
+    },
+  },
 } satisfies NextAuthConfig;

@@ -1,5 +1,12 @@
-import type { Geo } from "@vercel/functions";
 import type { ArtifactKind } from "@/components/artifact";
+
+// 替换 @vercel/functions 的 Geo 类型
+type Geo = {
+  latitude?: string;
+  longitude?: string;
+  city?: string;
+  country?: string;
+};
 
 export const artifactsPrompt = `
 Artifacts is a special user interface mode that helps users with writing, editing, and other content creation tasks. When artifact is open, it is on the right side of the screen, while the conversation is on the left side. When creating or updating documents, changes are reflected in real-time on the artifacts and visible to the user.
@@ -117,10 +124,10 @@ export const updateDocumentPrompt = (
 ${currentContent}`;
 };
 
-export const titlePrompt = `Generate a very short chat title (2-5 words max) based on the user's message.
-Rules:
-- Maximum 30 characters
-- No quotes, colons, hashtags, or markdown
-- Just the topic/intent, not a full sentence
-- If the message is a greeting like "hi" or "hello", respond with just "New conversation"
-- Be concise: "Weather in NYC" not "User asking about the weather in New York City"`;
+export const titlePrompt = `根据用户的消息生成一个简短的中文聊天标题（2-8个字）。
+规则：
+- 最多15个汉字
+- 不要使用引号、冒号、井号或markdown格式
+- 只写主题/意图，不要写完整句子
+- 如果是问候语如"你好"、"hi"，返回"新对话"
+- 简洁明了："北京天气"而不是"用户询问北京的天气情况"`;

@@ -1,46 +1,12 @@
-import type { NextRequest } from "next/server";
-import { auth } from "@/app/(auth)/auth";
-import { deleteAllChatsByUserId, getChatsByUserId } from "@/lib/db/queries";
-import { ChatSDKError } from "@/lib/errors";
+// History API - 前端使用 localStorage，此 API 仅作为占位符
+// 聊天历史完全在客户端 localStorage 中管理
 
-export async function GET(request: NextRequest) {
-  const { searchParams } = request.nextUrl;
-
-  const limit = Number.parseInt(searchParams.get("limit") || "10", 10);
-  const startingAfter = searchParams.get("starting_after");
-  const endingBefore = searchParams.get("ending_before");
-
-  if (startingAfter && endingBefore) {
-    return new ChatSDKError(
-      "bad_request:api",
-      "Only one of starting_after or ending_before can be provided."
-    ).toResponse();
-  }
-
-  const session = await auth();
-
-  if (!session?.user) {
-    return new ChatSDKError("unauthorized:chat").toResponse();
-  }
-
-  const chats = await getChatsByUserId({
-    id: session.user.id,
-    limit,
-    startingAfter,
-    endingBefore,
-  });
-
-  return Response.json(chats);
+export async function GET() {
+  // 返回空数组，前端从 localStorage 获取历史
+  return Response.json([]);
 }
 
 export async function DELETE() {
-  const session = await auth();
-
-  if (!session?.user) {
-    return new ChatSDKError("unauthorized:chat").toResponse();
-  }
-
-  const result = await deleteAllChatsByUserId({ userId: session.user.id });
-
-  return Response.json(result, { status: 200 });
+  // 返回成功，前端负责清除 localStorage
+  return Response.json({ success: true }, { status: 200 });
 }

@@ -17,7 +17,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useOnClickOutside } from "usehooks-ts";
+import { useOnClickOutside } from "@/hooks/use-hooks";
 import {
   Tooltip,
   TooltipContent,

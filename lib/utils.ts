@@ -7,7 +7,7 @@ import type {
 import { type ClassValue, clsx } from 'clsx';
 import { formatISO } from 'date-fns';
 import { twMerge } from 'tailwind-merge';
-import type { DBMessage, Document } from '@/lib/db/schema';
+import type { DBMessage, Document } from '@/lib/schema';
 import { ChatSDKError, type ErrorCode } from './errors';
 import type { ChatMessage, ChatTools, CustomUIDataTypes } from './types';
 
@@ -74,11 +74,11 @@ export function getMostRecentUserMessage(messages: UIMessage[]) {
 export function getDocumentTimestampByIndex(
   documents: Document[],
   index: number,
-) {
+): Date {
   if (!documents) { return new Date(); }
   if (index > documents.length) { return new Date(); }
 
-  return documents[index].createdAt;
+  return documents[index]?.createdAt ?? new Date();
 }
 
 export function getTrailingMessageId({

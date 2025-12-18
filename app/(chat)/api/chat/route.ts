@@ -1,76 +1,89 @@
-import { geolocation } from "@vercel/functions";
+import { readFile } from "fs/promises";
+import path from "path";
 import {
   convertToModelMessages,
   createUIMessageStream,
-  JsonToSseTransformStream,
+  createUIMessageStreamResponse,
   smoothStream,
   stepCountIs,
   streamText,
 } from "ai";
-import { after } from "next/server";
-import {
-  createResumableStreamContext,
-  type ResumableStreamContext,
-} from "resumable-stream";
-import { auth, type UserType } from "@/app/(auth)/auth";
-import type { VisibilityType } from "@/components/visibility-selector";
-import { entitlementsByUserType } from "@/lib/ai/entitlements";
+import { getServerConfig, getSystemPrompt } from "@/lib/config/server-config";
 import type { ChatModel } from "@/lib/ai/models";
-import { type RequestHints, systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { getWeather } from "@/lib/ai/tools/get-weather";
-import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { isProductionEnvironment } from "@/lib/constants";
-import {
-  createStreamId,
-  deleteChatById,
-  getChatById,
-  getMessageCountByUserId,
-  getMessagesByChatId,
-  saveChat,
-  saveMessages,
-  updateChatTitleById,
-} from "@/lib/db/queries";
-import type { DBMessage } from "@/lib/db/schema";
 import { ChatSDKError } from "@/lib/errors";
 import type { ChatMessage } from "@/lib/types";
-import { convertToUIMessages, generateUUID } from "@/lib/utils";
+import { generateUUID } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
-import { type PostRequestBody, postRequestBodySchema } from "./schema";
+import { postRequestBodySchema } from "./schema";
+
+const UPLOAD_DIR = process.env.UPLOAD_DIR || "/data/uploads";
+
+// 将本地文件 URL 转换为 base64 data URL
+async function convertLocalFilesToBase64(
+  messages: ChatMessage[]
+): Promise<ChatMessage[]> {
+  const processedMessages: ChatMessage[] = [];
+
+  for (const message of messages) {
+    if (!message.parts || !Array.isArray(message.parts)) {
+      processedMessages.push(message);
+      continue;
+    }
+
+    const processedParts = await Promise.all(
+      message.parts.map(async (part: any) => {
+        // 检查是否是本地文件 URL
+        if (
+          part.type === "file" &&
+          part.url &&
+          part.url.startsWith("/api/files/")
+        ) {
+          try {
+            // 从 URL 提取文件路径: /api/files/2025-12-17/xxx.png -> 2025-12-17/xxx.png
+            const filePath = part.url.replace("/api/files/", "");
+            const fullPath = path.join(UPLOAD_DIR, filePath);
+
+            // 读取文件并转换为 base64
+            const fileBuffer = await readFile(fullPath);
+            const base64 = fileBuffer.toString("base64");
+            const dataUrl = `data:${part.mediaType};base64,${base64}`;
+
+            return {
+              ...part,
+              url: dataUrl,
+            };
+          } catch (error) {
+            console.error("Failed to convert file to base64:", error);
+            return part; // 转换失败时返回原始 part
+          }
+        }
+        return part;
+      })
+    );
+
+    processedMessages.push({
+      ...message,
+      parts: processedParts,
+    });
+  }
+
+  return processedMessages;
+}
 
 export const maxDuration = 60;
 
-let globalStreamContext: ResumableStreamContext | null = null;
-
-export function getStreamContext() {
-  if (!globalStreamContext) {
-    try {
-      globalStreamContext = createResumableStreamContext({
-        waitUntil: after,
-      });
-    } catch (error: any) {
-      if (error.message.includes("REDIS_URL")) {
-        console.log(
-          " > Resumable streams are disabled due to missing REDIS_URL"
-        );
-      } else {
-        console.error(error);
-      }
-    }
-  }
-
-  return globalStreamContext;
-}
-
 export async function POST(request: Request) {
-  let requestBody: PostRequestBody;
+  let requestBody;
 
   try {
     const json = await request.json();
     requestBody = postRequestBodySchema.parse(json);
-  } catch (_) {
+  } catch {
     return new ChatSDKError("bad_request:api").toResponse();
   }
 
@@ -78,88 +91,35 @@ export async function POST(request: Request) {
     const {
       id,
       message,
+      messages: previousMessages = [],
       selectedChatModel,
-      selectedVisibilityType,
     }: {
       id: string;
       message: ChatMessage;
+      messages?: ChatMessage[];
       selectedChatModel: ChatModel["id"];
-      selectedVisibilityType: VisibilityType;
     } = requestBody;
 
-    const session = await auth();
+    // 构建完整消息历史
+    const uiMessages = [...previousMessages, message];
 
-    if (!session?.user) {
-      return new ChatSDKError("unauthorized:chat").toResponse();
-    }
+    // 将本地文件 URL 转换为 base64（用于发送给 AI 模型）
+    const processedMessages = await convertLocalFilesToBase64(uiMessages);
 
-    const userType: UserType = session.user.type;
-
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 24,
-    });
-
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerDay) {
-      return new ChatSDKError("rate_limit:chat").toResponse();
-    }
-
-    const chat = await getChatById({ id });
-    let messagesFromDb: DBMessage[] = [];
+    // 判断是否是新对话，生成标题
     let titlePromise: Promise<string> | null = null;
-
-    if (chat) {
-      if (chat.userId !== session.user.id) {
-        return new ChatSDKError("forbidden:chat").toResponse();
-      }
-      // Only fetch messages if chat already exists
-      messagesFromDb = await getMessagesByChatId({ id });
-    } else {
-      // Save chat immediately with placeholder title
-      await saveChat({
-        id,
-        userId: session.user.id,
-        title: "New chat",
-        visibility: selectedVisibilityType,
-      });
-
-      // Start title generation in parallel (don't await)
+    if (previousMessages.length === 0) {
       titlePromise = generateTitleFromUserMessage({ message });
     }
 
-    const uiMessages = [...convertToUIMessages(messagesFromDb), message];
-
-    const { longitude, latitude, city, country } = geolocation(request);
-
-    const requestHints: RequestHints = {
-      longitude,
-      latitude,
-      city,
-      country,
-    };
-
-    await saveMessages({
-      messages: [
-        {
-          chatId: id,
-          id: message.id,
-          role: "user",
-          parts: message.parts,
-          attachments: [],
-          createdAt: new Date(),
-        },
-      ],
-    });
-
-    const streamId = generateUUID();
-    await createStreamId({ streamId, chatId: id });
+    // 获取系统提示词
+    const systemPromptText = await getSystemPrompt();
 
     const stream = createUIMessageStream({
-      execute: ({ writer: dataStream }) => {
-        // Handle title generation in parallel
+      execute: async ({ writer: dataStream }) => {
+        // 处理标题生成
         if (titlePromise) {
           titlePromise.then((title) => {
-            updateChatTitleById({ chatId: id, title });
             dataStream.write({ type: "data-chat-title", data: title });
           });
         }
@@ -168,37 +128,23 @@ export async function POST(request: Request) {
           selectedChatModel.includes("reasoning") ||
           selectedChatModel.includes("thinking");
 
+        const model = await getLanguageModel(selectedChatModel);
+
         const result = streamText({
-          model: getLanguageModel(selectedChatModel),
-          system: systemPrompt({ selectedChatModel, requestHints }),
-          messages: convertToModelMessages(uiMessages),
+          model,
+          system: systemPromptText,
+          messages: convertToModelMessages(processedMessages),
           stopWhen: stepCountIs(5),
           experimental_activeTools: isReasoningModel
             ? []
-            : [
-                "getWeather",
-                "createDocument",
-                "updateDocument",
-                "requestSuggestions",
-              ],
+            : ["getWeather", "createDocument", "updateDocument"],
           experimental_transform: isReasoningModel
             ? undefined
             : smoothStream({ chunking: "word" }),
-          providerOptions: isReasoningModel
-            ? {
-                anthropic: {
-                  thinking: { type: "enabled", budgetTokens: 10_000 },
-                },
-              }
-            : undefined,
           tools: {
             getWeather,
-            createDocument: createDocument({ session, dataStream }),
-            updateDocument: updateDocument({ session, dataStream }),
-            requestSuggestions: requestSuggestions({
-              session,
-              dataStream,
-            }),
+            createDocument: createDocument({ dataStream }),
+            updateDocument: updateDocument({ dataStream }),
           },
           experimental_telemetry: {
             isEnabled: isProductionEnvironment,
@@ -215,77 +161,25 @@ export async function POST(request: Request) {
         );
       },
       generateId: generateUUID,
-      onFinish: async ({ messages }) => {
-        await saveMessages({
-          messages: messages.map((currentMessage) => ({
-            id: currentMessage.id,
-            role: currentMessage.role,
-            parts: currentMessage.parts,
-            createdAt: new Date(),
-            attachments: [],
-            chatId: id,
-          })),
-        });
-      },
       onError: () => {
-        return "Oops, an error occurred!";
+        return "抱歉，发生了错误，请稍后重试。";
       },
     });
 
-    // const streamContext = getStreamContext();
-
-    // if (streamContext) {
-    //   return new Response(
-    //     await streamContext.resumableStream(streamId, () =>
-    //       stream.pipeThrough(new JsonToSseTransformStream())
-    //     )
-    //   );
-    // }
-
-    return new Response(stream.pipeThrough(new JsonToSseTransformStream()));
+    return createUIMessageStreamResponse({
+      stream,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
   } catch (error) {
-    const vercelId = request.headers.get("x-vercel-id");
-
     if (error instanceof ChatSDKError) {
       return error.toResponse();
     }
 
-    // Check for Vercel AI Gateway credit card error
-    if (
-      error instanceof Error &&
-      error.message?.includes(
-        "AI Gateway requires a valid credit card on file to service requests"
-      )
-    ) {
-      return new ChatSDKError("bad_request:activate_gateway").toResponse();
-    }
-
-    console.error("Unhandled error in chat API:", error, { vercelId });
+    console.error("Unhandled error in chat API:", error);
     return new ChatSDKError("offline:chat").toResponse();
   }
-}
-
-export async function DELETE(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const id = searchParams.get("id");
-
-  if (!id) {
-    return new ChatSDKError("bad_request:api").toResponse();
-  }
-
-  const session = await auth();
-
-  if (!session?.user) {
-    return new ChatSDKError("unauthorized:chat").toResponse();
-  }
-
-  const chat = await getChatById({ id });
-
-  if (chat?.userId !== session.user.id) {
-    return new ChatSDKError("forbidden:chat").toResponse();
-  }
-
-  const deletedChat = await deleteChatById({ id });
-
-  return Response.json(deletedChat, { status: 200 });
 }

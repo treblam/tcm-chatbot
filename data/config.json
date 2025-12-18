@@ -1,0 +1,26 @@
+{
+  "providers": [
+    {
+      "id": "default",
+      "name": "OpenRouter",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiKey": "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",
+      "models": [
+        {
+          "id": "openai/gpt-oss-120b",
+          "name": "gpt-oss-120b",
+          "provider": "openai",
+          "description": "快速且经济实惠"
+        },
+        {
+          "id": "openai/gpt-5.2-chat",
+          "name": "gpt-5.2-chat",
+          "provider": "openai",
+          "description": "更强大的推理能力"
+        }
+      ]
+    }
+  ],
+  "defaultModel": "openai/gpt-oss-120b",
+  "systemPrompt": "你是一个友好的AI助手，专注于帮助用户解答问题。请用简洁、专业的方式回答。"
+}

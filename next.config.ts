@@ -1,18 +1,23 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  cacheComponents: true,
+  output: "standalone",
   images: {
+    unoptimized: true,
     remotePatterns: [
       {
         hostname: "avatar.vercel.sh",
       },
-      {
-        protocol: "https",
-        //https://nextjs.org/docs/messages/next-image-unconfigured-host
-        hostname: "*.public.blob.vercel-storage.com",
-      },
     ],
+  },
+  serverExternalPackages: [],
+  turbopack: {
+    resolveAlias: {
+      // 允许使用 node 内置模块
+      "node:fs/promises": "fs/promises",
+      "node:fs": "fs",
+      "node:path": "path",
+    },
   },
 };
 

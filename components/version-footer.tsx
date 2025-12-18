@@ -4,9 +4,9 @@ import { isAfter } from "date-fns";
 import { motion } from "framer-motion";
 import { useState } from "react";
 import { useSWRConfig } from "swr";
-import { useWindowSize } from "usehooks-ts";
+import { useWindowSize } from "@/hooks/use-hooks";
 import { useArtifact } from "@/hooks/use-artifact";
-import type { Document } from "@/lib/db/schema";
+import type { Document } from "@/lib/schema";
 import { getDocumentTimestampByIndex } from "@/lib/utils";
 import { LoaderIcon } from "./icons";
 import { Button } from "./ui/button";
@@ -70,6 +70,7 @@ export const VersionFooter = ({
                 optimisticData: documents
                   ? [
                       ...documents.filter((document) =>
+                        document.createdAt &&
                         isAfter(
                           new Date(document.createdAt),
                           new Date(

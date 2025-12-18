@@ -1,33 +1,28 @@
 import type { UIMessageStreamWriter } from "ai";
-import type { Session } from "next-auth";
 import { codeDocumentHandler } from "@/artifacts/code/server";
 import { sheetDocumentHandler } from "@/artifacts/sheet/server";
 import { textDocumentHandler } from "@/artifacts/text/server";
 import type { ArtifactKind } from "@/components/artifact";
-import { saveDocument } from "../db/queries";
-import type { Document } from "../db/schema";
 import type { ChatMessage } from "../types";
 
-export type SaveDocumentProps = {
+// 简化的文档类型（不依赖数据库 schema）
+export type Document = {
   id: string;
   title: string;
   kind: ArtifactKind;
   content: string;
-  userId: string;
 };
 
 export type CreateDocumentCallbackProps = {
   id: string;
   title: string;
   dataStream: UIMessageStreamWriter<ChatMessage>;
-  session: Session;
 };
 
 export type UpdateDocumentCallbackProps = {
   document: Document;
   description: string;
   dataStream: UIMessageStreamWriter<ChatMessage>;
-  session: Session;
 };
 
 export type DocumentHandler<T = ArtifactKind> = {
@@ -44,44 +39,22 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
   return {
     kind: config.kind,
     onCreateDocument: async (args: CreateDocumentCallbackProps) => {
-      const draftContent = await config.onCreateDocument({
+      // 生成文档内容并流式传输到前端
+      // 内容将在前端保存到 localStorage
+      await config.onCreateDocument({
         id: args.id,
         title: args.title,
         dataStream: args.dataStream,
-        session: args.session,
       });
-
-      if (args.session?.user?.id) {
-        await saveDocument({
-          id: args.id,
-          title: args.title,
-          content: draftContent,
-          kind: config.kind,
-          userId: args.session.user.id,
-        });
-      }
-
-      return;
     },
     onUpdateDocument: async (args: UpdateDocumentCallbackProps) => {
-      const draftContent = await config.onUpdateDocument({
+      // 更新文档内容并流式传输到前端
+      // 更新后的内容将在前端保存到 localStorage
+      await config.onUpdateDocument({
         document: args.document,
         description: args.description,
         dataStream: args.dataStream,
-        session: args.session,
       });
-
-      if (args.session?.user?.id) {
-        await saveDocument({
-          id: args.document.id,
-          title: args.document.title,
-          content: draftContent,
-          kind: config.kind,
-          userId: args.session.user.id,
-        });
-      }
-
-      return;
     },
   };
 }

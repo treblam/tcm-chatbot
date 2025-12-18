@@ -11,13 +11,13 @@ import {
   useState,
 } from "react";
 import useSWR, { useSWRConfig } from "swr";
-import { useDebounceCallback, useWindowSize } from "usehooks-ts";
+import { useDebounceCallback, useWindowSize } from "@/hooks/use-hooks";
 import { codeArtifact } from "@/artifacts/code/client";
 import { imageArtifact } from "@/artifacts/image/client";
 import { sheetArtifact } from "@/artifacts/sheet/client";
 import { textArtifact } from "@/artifacts/text/client";
 import { useArtifact } from "@/hooks/use-artifact";
-import type { Document, Vote } from "@/lib/db/schema";
+import type { Document, Vote } from "@/lib/schema";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { fetcher } from "@/lib/utils";
 import { ArtifactActions } from "./artifact-actions";
@@ -431,13 +431,15 @@ function PureArtifact({
                     </div>
                   ) : document ? (
                     <div className="text-muted-foreground text-sm">
-                      {`Updated ${formatDistance(
-                        new Date(document.createdAt),
-                        new Date(),
-                        {
-                          addSuffix: true,
-                        }
-                      )}`}
+                      {document.createdAt
+                        ? `Updated ${formatDistance(
+                            new Date(document.createdAt),
+                            new Date(),
+                            {
+                              addSuffix: true,
+                            }
+                          )}`
+                        : "已保存"}
                     </div>
                   ) : (
                     <div className="mt-2 h-3 w-32 animate-pulse rounded-md bg-muted-foreground/20" />

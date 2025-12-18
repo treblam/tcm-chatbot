@@ -1,42 +1,20 @@
-import { auth } from "@/app/(auth)/auth";
+// Document API - 文档存储在前端 localStorage
+// 此 API 仅作为占位符，供某些组件使用
+// 实际文档内容由前端 localStorage 管理
+
+import { NextResponse } from "next/server";
 import type { ArtifactKind } from "@/components/artifact";
-import {
-  deleteDocumentsByIdAfterTimestamp,
-  getDocumentsById,
-  saveDocument,
-} from "@/lib/db/queries";
-import { ChatSDKError } from "@/lib/errors";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
 
   if (!id) {
-    return new ChatSDKError(
-      "bad_request:api",
-      "Parameter id is missing"
-    ).toResponse();
+    return NextResponse.json({ error: "Parameter id is missing" }, { status: 400 });
   }
 
-  const session = await auth();
-
-  if (!session?.user) {
-    return new ChatSDKError("unauthorized:document").toResponse();
-  }
-
-  const documents = await getDocumentsById({ id });
-
-  const [document] = documents;
-
-  if (!document) {
-    return new ChatSDKError("not_found:document").toResponse();
-  }
-
-  if (document.userId !== session.user.id) {
-    return new ChatSDKError("forbidden:document").toResponse();
-  }
-
-  return Response.json(documents, { status: 200 });
+  // 返回空数组，前端从 localStorage 获取文档
+  return NextResponse.json([], { status: 200 });
 }
 
 export async function POST(request: Request) {
@@ -44,83 +22,36 @@ export async function POST(request: Request) {
   const id = searchParams.get("id");
 
   if (!id) {
-    return new ChatSDKError(
-      "bad_request:api",
-      "Parameter id is required."
-    ).toResponse();
-  }
-
-  const session = await auth();
-
-  if (!session?.user) {
-    return new ChatSDKError("not_found:document").toResponse();
+    return NextResponse.json({ error: "Parameter id is required" }, { status: 400 });
   }
 
   const {
     content,
     title,
     kind,
-  }: { content: string; title: string; kind: ArtifactKind } =
-    await request.json();
+  }: { content: string; title: string; kind: ArtifactKind } = await request.json();
 
-  const documents = await getDocumentsById({ id });
-
-  if (documents.length > 0) {
-    const [doc] = documents;
-
-    if (doc.userId !== session.user.id) {
-      return new ChatSDKError("forbidden:document").toResponse();
-    }
-  }
-
-  const document = await saveDocument({
-    id,
-    content,
-    title,
-    kind,
-    userId: session.user.id,
-  });
-
-  return Response.json(document, { status: 200 });
+  // 返回成功，前端负责保存到 localStorage
+  return NextResponse.json(
+    {
+      id,
+      content,
+      title,
+      kind,
+      createdAt: new Date(),
+    },
+    { status: 200 }
+  );
 }
 
 export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
-  const timestamp = searchParams.get("timestamp");
 
   if (!id) {
-    return new ChatSDKError(
-      "bad_request:api",
-      "Parameter id is required."
-    ).toResponse();
+    return NextResponse.json({ error: "Parameter id is required" }, { status: 400 });
   }
 
-  if (!timestamp) {
-    return new ChatSDKError(
-      "bad_request:api",
-      "Parameter timestamp is required."
-    ).toResponse();
-  }
-
-  const session = await auth();
-
-  if (!session?.user) {
-    return new ChatSDKError("unauthorized:document").toResponse();
-  }
-
-  const documents = await getDocumentsById({ id });
-
-  const [document] = documents;
-
-  if (document.userId !== session.user.id) {
-    return new ChatSDKError("forbidden:document").toResponse();
-  }
-
-  const documentsDeleted = await deleteDocumentsByIdAfterTimestamp({
-    id,
-    timestamp: new Date(timestamp),
-  });
-
-  return Response.json(documentsDeleted, { status: 200 });
+  // 返回成功，前端负责从 localStorage 删除
+  return NextResponse.json({ success: true }, { status: 200 });
 }

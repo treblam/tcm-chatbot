@@ -3,32 +3,26 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
-import useSWR, { useSWRConfig } from "swr";
-import { unstable_serialize } from "swr/infinite";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatHeader } from "@/components/chat-header";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { useArtifactSelector } from "@/hooks/use-artifact";
 import { useAutoResume } from "@/hooks/use-auto-resume";
 import { useChatVisibility } from "@/hooks/use-chat-visibility";
-import type { Vote } from "@/lib/db/schema";
+import { useLocalChats } from "@/hooks/use-local-chats";
 import { ChatSDKError } from "@/lib/errors";
+import {
+  createChat,
+  getChatById,
+  updateChatMessages,
+  updateChatTitle,
+} from "@/lib/storage/local-storage";
+import type { LocalMessage } from "@/lib/storage/types";
 import type { Attachment, ChatMessage } from "@/lib/types";
-import { fetcher, fetchWithErrorHandlers, generateUUID } from "@/lib/utils";
+import { fetchWithErrorHandlers, generateUUID } from "@/lib/utils";
 import { Artifact } from "./artifact";
 import { useDataStream } from "./data-stream-provider";
 import { Messages } from "./messages";
 import { MultimodalInput } from "./multimodal-input";
-import { getChatHistoryPaginationKey } from "./sidebar-history";
 import { toast } from "./toast";
 import type { VisibilityType } from "./visibility-selector";
 
@@ -48,34 +42,57 @@ export function Chat({
   autoResume: boolean;
 }) {
   const router = useRouter();
+  const { refresh } = useLocalChats();
 
   const { visibilityType } = useChatVisibility({
     chatId: id,
     initialVisibilityType,
   });
 
-  const { mutate } = useSWRConfig();
-
   // Handle browser back/forward navigation
   useEffect(() => {
     const handlePopState = () => {
-      // When user navigates back/forward, refresh to sync with URL
       router.refresh();
     };
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, [router]);
-  const { setDataStream } = useDataStream();
+
+  const { dataStream, setDataStream } = useDataStream();
 
   const [input, setInput] = useState<string>("");
-  const [showCreditCardAlert, setShowCreditCardAlert] = useState(false);
   const [currentModelId, setCurrentModelId] = useState(initialChatModel);
   const currentModelIdRef = useRef(currentModelId);
+  const chatCreatedRef = useRef(false);
 
   useEffect(() => {
     currentModelIdRef.current = currentModelId;
   }, [currentModelId]);
+
+  // 将 ChatMessage[] 转换为 LocalMessage[]
+  const convertToLocalMessages = useCallback(
+    (msgs: ChatMessage[]): LocalMessage[] => {
+      return msgs.map((msg) => ({
+        id: msg.id,
+        role: msg.role as "user" | "assistant" | "system",
+        parts: msg.parts as unknown[],
+        createdAt: new Date().toISOString(),
+        attachments: undefined,
+      }));
+    },
+    []
+  );
+
+  // 保存消息到 localStorage
+  const saveMessagesToStorage = useCallback(
+    (msgs: ChatMessage[]) => {
+      if (msgs.length === 0) return;
+      updateChatMessages(id, convertToLocalMessages(msgs));
+      refresh();
+    },
+    [id, convertToLocalMessages, refresh]
+  );
 
   const {
     messages,
@@ -109,24 +126,61 @@ export function Chat({
       setDataStream((ds) => (ds ? [...ds, dataPart] : []));
     },
     onFinish: () => {
-      mutate(unstable_serialize(getChatHistoryPaginationKey));
+      // 对话完成后保存到 localStorage
+      // messages 在 onFinish 时可能还没更新，使用 setTimeout 确保获取最新状态
+      setTimeout(() => {
+        saveMessagesToStorage(messages);
+      }, 100);
     },
     onError: (error) => {
       if (error instanceof ChatSDKError) {
-        // Check if it's a credit card error
-        if (
-          error.message?.includes("AI Gateway requires a valid credit card")
-        ) {
-          setShowCreditCardAlert(true);
-        } else {
-          toast({
-            type: "error",
-            description: error.message,
-          });
-        }
+        toast({
+          type: "error",
+          description: error.message,
+        });
       }
     },
   });
+
+  // 包装 sendMessage，在发送第一条消息时立即创建聊天并刷新侧边栏
+  const handleSendMessage = useCallback(
+    async (message: Parameters<typeof sendMessage>[0]) => {
+      // 如果聊天不存在，立即创建
+      const existingChat = getChatById(id);
+      if (!existingChat && !chatCreatedRef.current && message) {
+        const textPart = message.parts?.find((p: any) => p.type === "text");
+        const title = (textPart as any)?.text?.slice(0, 50) || "新对话";
+        createChat(id, title);
+        chatCreatedRef.current = true;
+        refresh(); // 立即刷新侧边栏
+      }
+
+      return sendMessage(message);
+    },
+    [id, sendMessage, refresh]
+  );
+
+  // 监听 data stream 中的标题更新
+  useEffect(() => {
+    if (dataStream) {
+      for (const part of dataStream) {
+        if (
+          part.type === "data-chat-title" &&
+          typeof part.data === "string"
+        ) {
+          updateChatTitle(id, part.data);
+          refresh();
+        }
+      }
+    }
+  }, [dataStream, id, refresh]);
+
+  // 当消息更新时保存到 localStorage
+  useEffect(() => {
+    if (messages.length > 0 && status === "ready") {
+      saveMessagesToStorage(messages);
+    }
+  }, [messages, status, saveMessagesToStorage]);
 
   const searchParams = useSearchParams();
   const query = searchParams.get("query");
@@ -135,7 +189,7 @@ export function Chat({
 
   useEffect(() => {
     if (query && !hasAppendedQuery) {
-      sendMessage({
+      handleSendMessage({
         role: "user" as const,
         parts: [{ type: "text", text: query }],
       });
@@ -143,12 +197,7 @@ export function Chat({
       setHasAppendedQuery(true);
       window.history.replaceState({}, "", `/chat/${id}`);
     }
-  }, [query, sendMessage, hasAppendedQuery, id]);
-
-  const { data: votes } = useSWR<Vote[]>(
-    messages.length >= 2 ? `/api/vote?chatId=${id}` : null,
-    fetcher
-  );
+  }, [query, handleSendMessage, hasAppendedQuery, id]);
 
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
@@ -163,11 +212,7 @@ export function Chat({
   return (
     <>
       <div className="overscroll-behavior-contain flex h-dvh min-w-0 touch-pan-y flex-col bg-background">
-        <ChatHeader
-          chatId={id}
-          isReadonly={isReadonly}
-          selectedVisibilityType={initialVisibilityType}
-        />
+        <ChatHeader chatId={id} />
 
         <Messages
           chatId={id}
@@ -178,7 +223,7 @@ export function Chat({
           selectedModelId={initialChatModel}
           setMessages={setMessages}
           status={status}
-          votes={votes}
+          votes={undefined}
         />
 
         <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
@@ -191,7 +236,7 @@ export function Chat({
               onModelChange={setCurrentModelId}
               selectedModelId={currentModelId}
               selectedVisibilityType={visibilityType}
-              sendMessage={sendMessage}
+              sendMessage={handleSendMessage}
               setAttachments={setAttachments}
               setInput={setInput}
               setMessages={setMessages}
@@ -211,44 +256,14 @@ export function Chat({
         regenerate={regenerate}
         selectedModelId={currentModelId}
         selectedVisibilityType={visibilityType}
-        sendMessage={sendMessage}
+        sendMessage={handleSendMessage}
         setAttachments={setAttachments}
         setInput={setInput}
         setMessages={setMessages}
         status={status}
         stop={stop}
-        votes={votes}
+        votes={undefined}
       />
-
-      <AlertDialog
-        onOpenChange={setShowCreditCardAlert}
-        open={showCreditCardAlert}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Activate AI Gateway</AlertDialogTitle>
-            <AlertDialogDescription>
-              This application requires{" "}
-              {process.env.NODE_ENV === "production" ? "the owner" : "you"} to
-              activate Vercel AI Gateway.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                window.open(
-                  "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%3Fmodal%3Dadd-credit-card",
-                  "_blank"
-                );
-                window.location.href = "/";
-              }}
-            >
-              Activate
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </>
   );
 }
